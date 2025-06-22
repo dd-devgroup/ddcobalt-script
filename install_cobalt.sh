@@ -31,7 +31,7 @@ fi
 # === Функция установки ===
 install_cobalt() {
   echo -e "${INFO} ${CYAN}Установка зависимостей...${RESET}"
-  apt update -y && apt install -y docker.io docker-compose curl nscd
+  apt update -y && apt install -y curl nscd
 
   echo -e "${INFO} ${CYAN}Запуск nscd...${RESET}"
   systemctl enable nscd && systemctl start nscd
