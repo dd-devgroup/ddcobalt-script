@@ -49,6 +49,9 @@ install_cobalt() {
   echo -e "${ASK} ${YELLOW}Введите внешний API URL (например, https://my.cobalt.instance/):${RESET}"
   read -rp ">>> " API_URL
 
+  echo -e "${ASK} ${YELLOW}Введите доменное имя для доступа через Caddy (например, cobalt.example.com):${RESET}"
+  read -rp ">>> " DOMAIN
+
   echo -e "${ASK} ${YELLOW}Нужно ли использовать cookies.json? [y/N]:${RESET}"
   read -rp ">>> " USE_COOKIES
   USE_COOKIES=${USE_COOKIES,,}
@@ -98,7 +101,20 @@ EOF
 EOF
   fi
 
+  # Добавляем сервис caddy с автоматическим SSL и проксированием
   cat >> "$COMPOSE_FILE" <<EOF
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    container_name: caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
 
   watchtower:
     image: ghcr.io/containrrr/watchtower
@@ -106,12 +122,28 @@ EOF
     command: --cleanup --scope cobalt --interval 900 --include-restarting
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  caddy_data:
+  caddy_config:
 EOF
 
-  echo -e "${INFO} ${CYAN}Запуск Cobalt через Docker Compose...${RESET}"
+  # Создаем Caddyfile для проксирования на cobalt
+  cat > "$COBALT_DIR/Caddyfile" <<EOF
+$DOMAIN {
+    reverse_proxy localhost:$PORT
+    log {
+      output stdout
+      format console
+    }
+}
+EOF
+
+  echo -e "${INFO} ${CYAN}Запуск Cobalt и Caddy через Docker Compose...${RESET}"
   docker compose -f "$COMPOSE_FILE" up -d
 
-  echo -e "${OK} ${GREEN}Установка завершена! Cobalt работает на порту $PORT${RESET}"
+  echo -e "${OK} ${GREEN}Установка завершена!${RESET}"
+  echo -e "${OK} ${GREEN}Cobalt доступен на порту $PORT локально и по домену https://$DOMAIN${RESET}"
   [[ "$USE_COOKIES" == "y" ]] && echo -e "${WARN} ${YELLOW}Файл cookies.json создан. Заполните его при необходимости.${RESET}"
 }
 
@@ -146,8 +178,8 @@ check_status() {
     echo -e "${OK} ${GREEN}Контейнер cobalt запущен:${RESET}"
     docker ps --filter "name=cobalt" --format "table {{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
 
-    echo -e "\n${INFO} ${CYAN}Вывод последних 20 строк логов (Ctrl+C для выхода)...${RESET}"
-    docker logs --tail 20 -f cobalt
+    echo -e "\n${INFO} ${CYAN}Вывод последних 20 строк логов cobalt...${RESET}"
+    docker logs --tail 20 cobalt
   else
     echo -e "${WARN} ${YELLOW}Контейнер cobalt не запущен.${RESET}"
   fi
