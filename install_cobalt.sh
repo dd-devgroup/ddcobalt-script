@@ -186,7 +186,7 @@ check_status() {
 while true; do
   echo -e ""
   echo -e "${CYAN}===== DDCobalt Setup Menu =====${RESET}"
-  echo -e "1. 🔧 Установить Cobalt и Caddy"
+  echo -e "1. 🔧 Установить Cobalt"
   echo -e "2. 🔄 Проверить обновления скрипта"
   echo -e "3. 🚪 Выйти"
   echo -e "4. 🔍 Проверить статус Cobalt"
