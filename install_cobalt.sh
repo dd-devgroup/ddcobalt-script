@@ -22,6 +22,13 @@ PORT="9000"
 SCRIPT_URL="https://raw.githubusercontent.com/dd-devgroup/ddcobalt-script/main/install_cobalt.sh"
 SCRIPT_PATH="$0"
 
+# Если скрипт запущен через поток (bash <(curl ...)), сохраняем локально для обновлений
+if [[ "$SCRIPT_PATH" == "bash" || "$SCRIPT_PATH" == "-bash" ]]; then
+  SCRIPT_PATH="$HOME/ddcobalt-install.sh"
+  echo -e "${WARN} ${YELLOW}Скрипт запущен из потока (bash <(curl ...)).${RESET}"
+  echo -e "${WARN} ${YELLOW}Для корректной работы обновления сохраните скрипт локально: $SCRIPT_PATH${RESET}"
+fi
+
 # Проверка прав
 if [ "$(id -u)" -ne 0 ]; then
   echo -e "${ERR} ${RED}Пожалуйста, запустите скрипт с правами root (через sudo)${RESET}"
@@ -153,22 +160,18 @@ update_script() {
   TMP_FILE=$(mktemp)
   curl -fsSL "$SCRIPT_URL" -o "$TMP_FILE"
 
-  if cmp -s "$TMP_FILE" "$SCRIPT_PATH"; then
-    echo -e "${OK} ${GREEN}У вас уже последняя версия скрипта.${RESET}"
-    rm "$TMP_FILE"
-  else
-    echo -e "${ASK} ${YELLOW}Найдена новая версия. Обновить? [y/N]:${RESET}"
-    read -rp ">>> " CONFIRM
-    CONFIRM=${CONFIRM,,}
-    if [[ "$CONFIRM" == "y" ]]; then
-      cp "$TMP_FILE" "$SCRIPT_PATH"
-      chmod +x "$SCRIPT_PATH"
-      echo -e "${OK} ${GREEN}Скрипт обновлён! Перезапустите его снова.${RESET}"
-    else
-      echo -e "${INFO} ${CYAN}Обновление отменено.${RESET}"
-    fi
-    rm "$TMP_FILE"
+  if [ ! -f "$SCRIPT_PATH" ]; then
+    echo -e "${WARN} ${YELLOW}Файл скрипта не найден локально (${SCRIPT_PATH}). Сохраняю обновлённый скрипт в этот файл.${RESET}"
   fi
+
+  if cmp -s "$TMP_FILE" "$SCRIPT_PATH" 2>/dev/null; then
+    echo -e "${OK} ${GREEN}У вас уже последняя версия скрипта.${RESET}"
+  else
+    cp "$TMP_FILE" "$SCRIPT_PATH"
+    chmod +x "$SCRIPT_PATH"
+    echo -e "${OK} ${GREEN}Скрипт обновлён! Перезапустите его снова.${RESET}"
+  fi
+  rm "$TMP_FILE"
 }
 
 # === Функция проверки статуса cobalt ===
