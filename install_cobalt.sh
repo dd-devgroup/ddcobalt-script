@@ -15,18 +15,20 @@ WARN="⚠️ "
 ERR="❌"
 ASK="👉"
 
-# Путь установки
+# Путь установки и локальный путь скрипта
 COBALT_DIR="$HOME/cobalt"
 COMPOSE_FILE="$COBALT_DIR/docker-compose.yml"
 PORT="9000"
 SCRIPT_URL="https://raw.githubusercontent.com/dd-devgroup/ddcobalt-script/main/install_cobalt.sh"
-SCRIPT_PATH="$0"
+LOCAL_SCRIPT="$HOME/ddcobalt-install.sh"
 
-# Если скрипт запущен через поток (bash <(curl ...)), сохраняем локально для обновлений
-if [[ "$SCRIPT_PATH" == "bash" || "$SCRIPT_PATH" == "-bash" ]]; then
-  SCRIPT_PATH="$HOME/ddcobalt-install.sh"
-  echo -e "${WARN} ${YELLOW}Скрипт запущен из потока (bash <(curl ...)).${RESET}"
-  echo -e "${WARN} ${YELLOW}Для корректной работы обновления сохраните скрипт локально: $SCRIPT_PATH${RESET}"
+# Проверка, не запущен ли скрипт из потока (не из файла)
+if [[ ! -f "$LOCAL_SCRIPT" ]]; then
+  # Если запущен не из файла, сохраняем себя и перезапускаемся
+  echo -e "${WARN} ${YELLOW}Скрипт запущен не из файла, сохраняю в $LOCAL_SCRIPT и перезапускаюсь...${RESET}"
+  curl -fsSL "$SCRIPT_URL" -o "$LOCAL_SCRIPT"
+  chmod +x "$LOCAL_SCRIPT"
+  exec "$LOCAL_SCRIPT" "$@"
 fi
 
 # Проверка прав
@@ -160,18 +162,16 @@ update_script() {
   TMP_FILE=$(mktemp)
   curl -fsSL "$SCRIPT_URL" -o "$TMP_FILE"
 
-  if [ ! -f "$SCRIPT_PATH" ]; then
-    echo -e "${WARN} ${YELLOW}Файл скрипта не найден локально (${SCRIPT_PATH}). Сохраняю обновлённый скрипт в этот файл.${RESET}"
-  fi
-
-  if cmp -s "$TMP_FILE" "$SCRIPT_PATH" 2>/dev/null; then
+  if cmp -s "$TMP_FILE" "$LOCAL_SCRIPT"; then
     echo -e "${OK} ${GREEN}У вас уже последняя версия скрипта.${RESET}"
+    rm "$TMP_FILE"
   else
-    cp "$TMP_FILE" "$SCRIPT_PATH"
-    chmod +x "$SCRIPT_PATH"
+    echo -e "${WARN} ${YELLOW}Найдена новая версия. Обновляю автоматически...${RESET}"
+    cp "$TMP_FILE" "$LOCAL_SCRIPT"
+    chmod +x "$LOCAL_SCRIPT"
+    rm "$TMP_FILE"
     echo -e "${OK} ${GREEN}Скрипт обновлён! Перезапустите его снова.${RESET}"
   fi
-  rm "$TMP_FILE"
 }
 
 # === Функция проверки статуса cobalt ===
