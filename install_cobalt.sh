@@ -32,17 +32,16 @@ fi
 install_cobalt() {
   echo -e "${INFO} ${CYAN}Установка зависимостей...${RESET}"
   echo -e "${INFO} ${CYAN}Проверка Docker...${RESET}"
-if ! command -v docker &> /dev/null; then
-  echo -e "${WARN} ${YELLOW}Docker не найден. Попробуйте установить вручную: https://docs.docker.com/engine/install/ubuntu/${RESET}"
-  exit 1
-else
-  echo -e "${OK} ${GREEN}Docker уже установлен.${RESET}"
-fi
+  if ! command -v docker &> /dev/null; then
+    echo -e "${WARN} ${YELLOW}Docker не найден. Попробуйте установить вручную: https://docs.docker.com/engine/install/ubuntu/${RESET}"
+    exit 1
+  else
+    echo -e "${OK} ${GREEN}Docker уже установлен.${RESET}"
+  fi
 
-echo -e "${INFO} ${CYAN}Установка зависимостей...${RESET}"
-apt update -y
-apt install -y docker-compose curl nscd
-
+  echo -e "${INFO} ${CYAN}Установка зависимостей...${RESET}"
+  apt update -y
+  apt install -y docker-compose curl nscd
 
   echo -e "${INFO} ${CYAN}Запуск nscd...${RESET}"
   systemctl enable nscd && systemctl start nscd
@@ -140,6 +139,20 @@ update_script() {
   fi
 }
 
+# === Функция проверки статуса cobalt ===
+check_status() {
+  echo -e "${INFO} ${CYAN}Проверка запущенных контейнеров Cobalt...${RESET}"
+  if docker ps --format '{{.Names}}' | grep -qw cobalt; then
+    echo -e "${OK} ${GREEN}Контейнер cobalt запущен:${RESET}"
+    docker ps --filter "name=cobalt" --format "table {{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+
+    echo -e "\n${INFO} ${CYAN}Вывод последних 20 строк логов (Ctrl+C для выхода)...${RESET}"
+    docker logs --tail 20 -f cobalt
+  else
+    echo -e "${WARN} ${YELLOW}Контейнер cobalt не запущен.${RESET}"
+  fi
+}
+
 # === Главное меню ===
 while true; do
   echo -e ""
@@ -147,13 +160,15 @@ while true; do
   echo -e "1. 🔧 Установить Cobalt"
   echo -e "2. 🔄 Проверить обновления скрипта"
   echo -e "3. 🚪 Выйти"
+  echo -e "4. 🔍 Проверить статус Cobalt"
   echo -e ""
-  read -rp "${ASK} Выберите действие [1-3]: " choice
+  read -rp "${ASK} Выберите действие [1-4]: " choice
 
   case $choice in
     1) install_cobalt ;;
     2) update_script ;;
     3) echo -e "${OK} ${GREEN}Выход...${RESET}"; exit 0 ;;
+    4) check_status ;;
     *) echo -e "${ERR} ${RED}Неверный выбор. Попробуйте снова.${RESET}" ;;
   esac
 done
