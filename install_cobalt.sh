@@ -15,34 +15,44 @@ WARN="⚠️ "
 ERR="❌"
 ASK="👉"
 
-# Путь установки и локальный путь скрипта
 COBALT_DIR="$HOME/cobalt"
 COMPOSE_FILE="$COBALT_DIR/docker-compose.yml"
 PORT="9000"
 SCRIPT_URL="https://raw.githubusercontent.com/dd-devgroup/ddcobalt-script/main/install_cobalt.sh"
 LOCAL_SCRIPT="$HOME/ddcobalt-install.sh"
 
-# Проверка, не запущен ли скрипт из потока (не из файла)
 if [[ ! -f "$LOCAL_SCRIPT" ]]; then
-  # Если запущен не из файла, сохраняем себя и перезапускаемся
   echo -e "${WARN} ${YELLOW}Скрипт запущен не из файла, сохраняю в $LOCAL_SCRIPT и перезапускаюсь...${RESET}"
   curl -fsSL "$SCRIPT_URL" -o "$LOCAL_SCRIPT"
   chmod +x "$LOCAL_SCRIPT"
   exec "$LOCAL_SCRIPT" "$@"
 fi
 
-# Проверка прав
 if [ "$(id -u)" -ne 0 ]; then
   echo -e "${ERR} ${RED}Пожалуйста, запустите скрипт с правами root (через sudo)${RESET}"
   exit 1
 fi
 
-# === Функция установки ===
+install_caddy() {
+  echo -e "${INFO} ${CYAN}Установка Caddy...${RESET}"
+  apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+
+  apt update
+  apt install -y caddy
+
+  systemctl enable caddy
+  systemctl start caddy
+
+  echo -e "${OK} ${GREEN}Caddy установлен и запущен.${RESET}"
+}
+
 install_cobalt() {
-  echo -e "${INFO} ${CYAN}Установка зависимостей...${RESET}"
   echo -e "${INFO} ${CYAN}Проверка Docker...${RESET}"
   if ! command -v docker &> /dev/null; then
-    echo -e "${WARN} ${YELLOW}Docker не найден. Попробуйте установить вручную: https://docs.docker.com/engine/install/ubuntu/${RESET}"
+    echo -e "${WARN} ${YELLOW}Docker не найден. Установите Docker: https://docs.docker.com/engine/install/ubuntu/${RESET}"
     exit 1
   else
     echo -e "${OK} ${GREEN}Docker уже установлен.${RESET}"
@@ -101,29 +111,6 @@ EOF
   cat >> "$COMPOSE_FILE" <<EOF
     labels:
       - com.centurylinklabs.watchtower.scope=cobalt
-EOF
-
-  if [[ "$USE_COOKIES" == "y" ]]; then
-    cat >> "$COMPOSE_FILE" <<EOF
-    volumes:
-      - ./cookies.json:/cookies.json
-EOF
-  fi
-
-  # Добавляем сервис caddy с автоматическим SSL и проксированием
-  cat >> "$COMPOSE_FILE" <<EOF
-
-  caddy:
-    image: caddy:2
-    restart: unless-stopped
-    container_name: caddy
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-      - caddy_config:/config
 
   watchtower:
     image: ghcr.io/containrrr/watchtower
@@ -137,8 +124,15 @@ volumes:
   caddy_config:
 EOF
 
-  # Создаем Caddyfile для проксирования на cobalt
-  cat > "$COBALT_DIR/Caddyfile" <<EOF
+  if [[ "$USE_COOKIES" == "y" ]]; then
+    cat >> "$COMPOSE_FILE" <<EOF
+    volumes:
+      - ./cookies.json:/cookies.json
+EOF
+  fi
+
+  echo -e "${INFO} ${CYAN}Создание Caddyfile для $DOMAIN...${RESET}"
+  cat > "/etc/caddy/Caddyfile" <<EOF
 $DOMAIN {
     reverse_proxy localhost:$PORT
     log {
@@ -148,15 +142,17 @@ $DOMAIN {
 }
 EOF
 
-  echo -e "${INFO} ${CYAN}Запуск Cobalt и Caddy через Docker Compose...${RESET}"
+  echo -e "${INFO} ${CYAN}Перезапуск сервиса Caddy для применения конфигурации...${RESET}"
+  systemctl reload caddy || systemctl restart caddy
+
+  echo -e "${INFO} ${CYAN}Запуск Cobalt через Docker Compose...${RESET}"
   docker compose -f "$COMPOSE_FILE" up -d
 
   echo -e "${OK} ${GREEN}Установка завершена!${RESET}"
-  echo -e "${OK} ${GREEN}Cobalt доступен на порту $PORT локально и по домену https://$DOMAIN${RESET}"
+  echo -e "${OK} ${GREEN}Cobalt доступен локально на порту $PORT и по домену https://$DOMAIN${RESET}"
   [[ "$USE_COOKIES" == "y" ]] && echo -e "${WARN} ${YELLOW}Файл cookies.json создан. Заполните его при необходимости.${RESET}"
 }
 
-# === Функция проверки обновлений скрипта ===
 update_script() {
   echo -e "${INFO} ${CYAN}Проверка обновлений скрипта...${RESET}"
   TMP_FILE=$(mktemp)
@@ -174,7 +170,6 @@ update_script() {
   fi
 }
 
-# === Функция проверки статуса cobalt ===
 check_status() {
   echo -e "${INFO} ${CYAN}Проверка запущенных контейнеров Cobalt...${RESET}"
   if docker ps --format '{{.Names}}' | grep -qw cobalt; then
@@ -188,11 +183,10 @@ check_status() {
   fi
 }
 
-# === Главное меню ===
 while true; do
   echo -e ""
   echo -e "${CYAN}===== DDCobalt Setup Menu =====${RESET}"
-  echo -e "1. 🔧 Установить Cobalt"
+  echo -e "1. 🔧 Установить Cobalt и Caddy"
   echo -e "2. 🔄 Проверить обновления скрипта"
   echo -e "3. 🚪 Выйти"
   echo -e "4. 🔍 Проверить статус Cobalt"
@@ -200,7 +194,10 @@ while true; do
   read -rp "${ASK} Выберите действие [1-4]: " choice
 
   case $choice in
-    1) install_cobalt ;;
+    1)
+      install_caddy
+      install_cobalt
+      ;;
     2) update_script ;;
     3) echo -e "${OK} ${GREEN}Выход...${RESET}"; exit 0 ;;
     4) check_status ;;
