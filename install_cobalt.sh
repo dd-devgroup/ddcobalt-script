@@ -31,7 +31,18 @@ fi
 # === Функция установки ===
 install_cobalt() {
   echo -e "${INFO} ${CYAN}Установка зависимостей...${RESET}"
-  apt update -y && apt install -y curl nscd
+  echo -e "${INFO} ${CYAN}Проверка Docker...${RESET}"
+if ! command -v docker &> /dev/null; then
+  echo -e "${WARN} ${YELLOW}Docker не найден. Попробуйте установить вручную: https://docs.docker.com/engine/install/ubuntu/${RESET}"
+  exit 1
+else
+  echo -e "${OK} ${GREEN}Docker уже установлен.${RESET}"
+fi
+
+echo -e "${INFO} ${CYAN}Установка зависимостей...${RESET}"
+apt update -y
+apt install -y docker-compose curl nscd
+
 
   echo -e "${INFO} ${CYAN}Запуск nscd...${RESET}"
   systemctl enable nscd && systemctl start nscd
