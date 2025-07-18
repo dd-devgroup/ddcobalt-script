@@ -161,17 +161,30 @@ server {
 EOF
 
   echo -e "${INFO} ${CYAN}Создание директорий для certbot webroot и certs...${RESET}"
-  mkdir -p ./certs ./webroot
+mkdir -p ./certs ./webroot
 
-  echo -e "${INFO} ${CYAN}Выпуск Let's Encrypt сертификата...${RESET}"
-  certbot certonly --webroot -w "$COBALT_DIR/webroot" -d "$DOMAIN" --agree-tos --email "admin@$DOMAIN" --non-interactive --preferred-challenges http
+echo -e "${INFO} ${CYAN}Запуск nginx для выдачи сертификатов...${RESET}"
+docker compose -f "$COMPOSE_FILE" up -d nginx
 
-  echo -e "${INFO} ${CYAN}Запуск Cobalt через Docker Compose...${RESET}"
-  docker compose -f "$COMPOSE_FILE" up -d
+echo -e "${INFO} ${CYAN}Ожидание запуска nginx...${RESET}"
+for i in {1..10}; do
+  if nc -z localhost 80; then
+    echo -e "${OK} ${GREEN}nginx запущен.${RESET}"
+    break
+  fi
+  echo -e "${INFO} ${CYAN}Ожидание... ($i/10)${RESET}"
+  sleep 2
+done
 
-  echo -e "${OK} ${GREEN}Установка завершена!${RESET}"
-  echo -e "${OK} ${GREEN}Cobalt доступен по адресу https://$DOMAIN${RESET}"
-  [[ "$USE_COOKIES" == "y" ]] && echo -e "${WARN} ${YELLOW}Файл cookies.json создан. Заполните его при необходимости.${RESET}"
+echo -e "${INFO} ${CYAN}Выпуск Let's Encrypt сертификата...${RESET}"
+certbot certonly --webroot -w "$COBALT_DIR/webroot" -d "$DOMAIN" --agree-tos --email "admin@$DOMAIN" --non-interactive --preferred-challenges http
+
+echo -e "${INFO} ${CYAN}Запуск Cobalt через Docker Compose...${RESET}"
+docker compose -f "$COMPOSE_FILE" up -d
+
+echo -e "${OK} ${GREEN}Установка завершена!${RESET}"
+echo -e "${OK} ${GREEN}Cobalt доступен по адресу https://$DOMAIN${RESET}"
+[[ "$USE_COOKIES" == "y" ]] && echo -e "${WARN} ${YELLOW}Файл cookies.json создан. Заполните его при необходимости.${RESET}"
 }
 
 manage_certs() {
