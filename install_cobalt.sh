@@ -107,6 +107,7 @@ EOF
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./certs:/etc/ssl/certs:ro
       - ./certs:/etc/letsencrypt/live/$DOMAIN:ro
+      - ./webroot:/var/www/certbot
     networks:
       - cobalt_net
 
@@ -157,9 +158,11 @@ server {
 }
 EOF
 
+  echo -e "${INFO} ${CYAN}Создание директорий для certbot webroot и certs...${RESET}"
+  mkdir -p ./certs ./webroot
+
   echo -e "${INFO} ${CYAN}Выпуск Let's Encrypt сертификата...${RESET}"
-  mkdir -p ./certs /var/www/certbot
-  certbot certonly --standalone -d $DOMAIN --agree-tos --email admin@$DOMAIN --non-interactive --preferred-challenges http
+  certbot certonly --webroot -w "$COBALT_DIR/webroot" -d "$DOMAIN" --agree-tos --email "admin@$DOMAIN" --non-interactive --preferred-challenges http
 
   echo -e "${INFO} ${CYAN}Запуск Cobalt через Docker Compose...${RESET}"
   docker compose -f "$COMPOSE_FILE" up -d
@@ -170,6 +173,8 @@ EOF
 }
 
 manage_certs() {
+  DOMAIN=$(grep 'server_name' "$COBALT_DIR/nginx.conf" | head -n1 | awk '{print $2}' | tr -d ';')
+
   echo -e "${CYAN}Управление сертификатами${RESET}"
   echo -e "1. Обновить текущие сертификаты"
   echo -e "2. Сгенерировать новые сертификаты для другого домена"
@@ -186,7 +191,8 @@ manage_certs() {
       read -rp ">>> " NEW_DOMAIN
       sed -i "s/server_name .*/server_name $NEW_DOMAIN;/" "$COBALT_DIR/nginx.conf"
       docker compose -f "$COMPOSE_FILE" down
-      certbot certonly --standalone -d $NEW_DOMAIN --agree-tos --email admin@$NEW_DOMAIN --non-interactive --preferred-challenges http
+      # Обновляем webroot, если надо — здесь используем то же, что и раньше
+      certbot certonly --webroot -w "$COBALT_DIR/webroot" -d "$NEW_DOMAIN" --agree-tos --email admin@$NEW_DOMAIN --non-interactive --preferred-challenges http
       docker compose -f "$COMPOSE_FILE" up -d
       echo -e "${OK} ${GREEN}Сертификаты обновлены для нового домена: $NEW_DOMAIN${RESET}"
       ;;
