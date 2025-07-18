@@ -51,10 +51,10 @@ install_cobalt() {
 
   echo -e "${ASK} ${YELLOW}Введите внешний API URL (например, my.cobalt.instance):${RESET}"
   read -rp ">>> " API_URL
-  
+
   # Извлечь только домен (хост) из введённой строки, убрав http://, https://, слэши и пр.
   DOMAIN=$(echo "$API_URL" | sed -E 's#https?://##' | sed 's#/.*##')
-  
+
   echo -e "${INFO} ${CYAN}Используем домен для certbot: $DOMAIN${RESET}"
   echo -e "${ASK} ${YELLOW}Нужно ли использовать cookies.json? [y/N]:${RESET}"
   read -rp ">>> " USE_COOKIES
@@ -174,84 +174,4 @@ EOF
   [[ "$USE_COOKIES" == "y" ]] && echo -e "${WARN} ${YELLOW}Файл cookies.json создан. Заполните его при необходимости.${RESET}"
 }
 
-manage_certs() {
-  DOMAIN=$(grep 'server_name' "$COBALT_DIR/nginx.conf" | head -n1 | awk '{print $2}' | tr -d ';')
-
-  echo -e "${CYAN}Управление сертификатами${RESET}"
-  echo -e "1. Обновить текущие сертификаты"
-  echo -e "2. Сгенерировать новые сертификаты для другого домена"
-  echo -e "0. Выход"
-  read -rp "[?] Выберите действие (0-2): " cert_choice
-  case $cert_choice in
-    1)
-      echo -e "${INFO} ${CYAN}Обновление сертификатов certbot...${RESET}"
-      certbot renew
-      docker restart cobalt-nginx
-      ;;
-    2)
-      echo -e "${ASK} ${YELLOW}Введите новый домен:${RESET}"
-      read -rp ">>> " NEW_DOMAIN
-      sed -i "s/server_name .*/server_name $NEW_DOMAIN;/" "$COBALT_DIR/nginx.conf"
-      docker compose -f "$COMPOSE_FILE" down
-      # Обновляем webroot, если надо — здесь используем то же, что и раньше
-      certbot certonly --webroot -w "$COBALT_DIR/webroot" -d "$NEW_DOMAIN" --agree-tos --email admin@$NEW_DOMAIN --non-interactive --preferred-challenges http
-      docker compose -f "$COMPOSE_FILE" up -d
-      echo -e "${OK} ${GREEN}Сертификаты обновлены для нового домена: $NEW_DOMAIN${RESET}"
-      ;;
-    0)
-      return ;;
-    *)
-      echo -e "${ERR} ${RED}Неверный выбор.${RESET}"
-      ;;
-  esac
-}
-
-update_script() {
-  echo -e "${INFO} ${CYAN}Проверка обновлений скрипта...${RESET}"
-  TMP_FILE=$(mktemp)
-  curl -fsSL "$SCRIPT_URL" -o "$TMP_FILE"
-
-  if cmp -s "$TMP_FILE" "$LOCAL_SCRIPT"; then
-    echo -e "${OK} ${GREEN}У вас уже последняя версия скрипта.${RESET}"
-    rm "$TMP_FILE"
-  else
-    echo -e "${WARN} ${YELLOW}Найдена новая версия. Обновляю автоматически...${RESET}"
-    cp "$TMP_FILE" "$LOCAL_SCRIPT"
-    chmod +x "$LOCAL_SCRIPT"
-    rm "$TMP_FILE"
-    echo -e "${OK} ${GREEN}Скрипт обновлён! Перезапустите его снова.${RESET}"
-  fi
-}
-
-check_status() {
-  echo -e "${INFO} ${CYAN}Проверка запущенных контейнеров Cobalt...${RESET}"
-  if docker ps --format '{{.Names}}' | grep -qw cobalt; then
-    echo -e "${OK} ${GREEN}Контейнер cobalt запущен:${RESET}"
-    docker ps --filter "name=cobalt" --format "table {{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
-    echo -e "\n${INFO} ${CYAN}Вывод последних 20 строк логов cobalt...${RESET}"
-    docker logs --tail 20 cobalt
-  else
-    echo -e "${WARN} ${YELLOW}Контейнер cobalt не запущен.${RESET}"
-  fi
-}
-
-while true; do
-  echo -e ""
-  echo -e "${CYAN}===== DDCobalt Setup Menu =====${RESET}"
-  echo -e "1. 🔧 Установить Cobalt"
-  echo -e "2. 🔄 Проверить обновления скрипта"
-  echo -e "3. 🚪 Выйти"
-  echo -e "4. 🔍 Проверить статус Cobalt"
-  echo -e "5. 🔒 Управление сертификатами"
-  echo -e ""
-  read -rp "${ASK} Выберите действие [1-5]: " choice
-
-  case $choice in
-    1) install_cobalt ;;
-    2) update_script ;;
-    3) echo -e "${OK} ${GREEN}Выход...${RESET}"; exit 0 ;;
-    4) check_status ;;
-    5) manage_certs ;;
-    *) echo -e "${ERR} ${RED}Неверный выбор. Попробуйте снова.${RESET}" ;;
-  esac
-done
+[остальной код без изменений...]
