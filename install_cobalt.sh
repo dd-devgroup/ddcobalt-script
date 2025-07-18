@@ -146,11 +146,12 @@ EOF
       - /var/run/docker.sock:/var/run/docker.sock
 EOF
 
-  if [[ "$USE_COOKIES" == "y" ]]; then
-    echo -e "
-volumes:
-  - ./cookies.json:/cookies.json" >> "$COMPOSE_FILE"
+   if [[ "$USE_COOKIES" == "y" ]]; then
+    echo '      COOKIE_PATH: "/cookies.json"' >> "$COMPOSE_FILE"
+    echo '    volumes:' >> "$COMPOSE_FILE"
+    echo '      - ./cookies.json:/cookies.json' >> "$COMPOSE_FILE"
   fi
+
 
   echo -e "${INFO} ${CYAN}Создание конфигурации nginx (./nginx.conf)...${RESET}"
   cat > nginx.conf <<EOF
