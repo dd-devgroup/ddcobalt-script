@@ -36,11 +36,36 @@ fi
 install_cobalt() {
   echo -e "${INFO} ${CYAN}Проверка Docker...${RESET}"
   if ! command -v docker &> /dev/null; then
-    echo -e "${WARN} ${YELLOW}Docker не найден. Установите Docker: https://docs.docker.com/engine/install/ubuntu/${RESET}"
-    exit 1
-  else
-    echo -e "${OK} ${GREEN}Docker уже установлен.${RESET}"
-  fi
+  echo -e "${WARN} ${YELLOW}Docker не найден. Устанавливаю Docker...${RESET}"
+  apt update -y
+  apt install -y ca-certificates curl gnupg lsb-release
+
+  mkdir -p /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+  echo \
+    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+    $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+  apt update -y
+  apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+  echo -e "${OK} ${GREEN}Docker установлен.${RESET}"
+else
+  echo -e "${OK} ${GREEN}Docker уже установлен.${RESET}"
+fi
+
+# Проверка docker-compose
+if ! command -v docker-compose &> /dev/null; then
+  echo -e "${WARN} ${YELLOW}docker-compose не найден. Устанавливаю...${RESET}"
+  curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+  chmod +x /usr/local/bin/docker-compose
+  ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
+  echo -e "${OK} ${GREEN}docker-compose установлен.${RESET}"
+else
+  echo -e "${OK} ${GREEN}docker-compose уже установлен.${RESET}"
+fi
+
 
   echo -e "${INFO} ${CYAN}Установка зависимостей...${RESET}"
   apt update -y
