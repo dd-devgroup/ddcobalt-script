@@ -52,8 +52,7 @@ install_cobalt() {
   echo -e "${ASK} ${YELLOW}Введите внешний API URL (например, https://my.cobalt.instance/):${RESET}"
   read -rp ">>> " API_URL
 
-  echo -e "${ASK} ${YELLOW}Введите доменное имя для доступа через Nginx (например, cobalt.example.com):${RESET}"
-  read -rp ">>> " DOMAIN
+  DOMAIN=$(echo "$API_URL" | awk -F[/:] '{print $4}')
 
   echo -e "${ASK} ${YELLOW}Нужно ли использовать cookies.json? [y/N]:${RESET}"
   read -rp ">>> " USE_COOKIES
@@ -108,6 +107,20 @@ EOF
     networks:
       - cobalt_net
 
+  acme:
+    image: nginxproxy/acme-companion
+    container_name: cobalt-acme
+    restart: unless-stopped
+    environment:
+      - DEFAULT_EMAIL=admin@$DOMAIN
+    volumes:
+      - ./certs:/etc/nginx/certs:rw
+      - ./vhost.d:/etc/nginx/vhost.d:rw
+      - ./html:/usr/share/nginx/html:rw
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - nginx
+
   watchtower:
     image: ghcr.io/containrrr/watchtower
     restart: unless-stopped
@@ -147,6 +160,34 @@ EOF
   [[ "$USE_COOKIES" == "y" ]] && echo -e "${WARN} ${YELLOW}Файл cookies.json создан. Заполните его при необходимости.${RESET}"
 }
 
+manage_certs() {
+  echo -e "${CYAN}Управление сертификатами${RESET}"
+  echo -e "1. Обновить текущие сертификаты"
+  echo -e "2. Сгенерировать новые сертификаты для другого домена"
+  echo -e "0. Выход"
+  read -rp "[?] Выберите действие (0-2): " cert_choice
+  case $cert_choice in
+    1)
+      echo -e "${INFO} ${CYAN}Перезапуск acme-companion для обновления сертификатов...${RESET}"
+      docker restart cobalt-acme
+      ;;
+    2)
+      echo -e "${ASK} ${YELLOW}Введите новый домен:${RESET}"
+      read -rp ">>> " NEW_DOMAIN
+      sed -i "s/server_name .*/server_name $NEW_DOMAIN;/" "$COBALT_DIR/nginx.conf"
+      sed -i "s/DEFAULT_EMAIL=admin@.*/DEFAULT_EMAIL=admin@$NEW_DOMAIN/" "$COMPOSE_FILE"
+      docker compose -f "$COMPOSE_FILE" down
+      docker compose -f "$COMPOSE_FILE" up -d
+      echo -e "${OK} ${GREEN}Сертификаты обновлены для нового домена: $NEW_DOMAIN${RESET}"
+      ;;
+    0)
+      return ;;
+    *)
+      echo -e "${ERR} ${RED}Неверный выбор.${RESET}"
+      ;;
+  esac
+}
+
 update_script() {
   echo -e "${INFO} ${CYAN}Проверка обновлений скрипта...${RESET}"
   TMP_FILE=$(mktemp)
@@ -183,14 +224,16 @@ while true; do
   echo -e "2. 🔄 Проверить обновления скрипта"
   echo -e "3. 🚪 Выйти"
   echo -e "4. 🔍 Проверить статус Cobalt"
+  echo -e "5. 🔒 Управление сертификатами"
   echo -e ""
-  read -rp "${ASK} Выберите действие [1-4]: " choice
+  read -rp "${ASK} Выберите действие [1-5]: " choice
 
   case $choice in
     1) install_cobalt ;;
     2) update_script ;;
     3) echo -e "${OK} ${GREEN}Выход...${RESET}"; exit 0 ;;
     4) check_status ;;
+    5) manage_certs ;;
     *) echo -e "${ERR} ${RED}Неверный выбор. Попробуйте снова.${RESET}" ;;
   esac
 done
