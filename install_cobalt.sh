@@ -33,20 +33,62 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-install_caddy() {
-  echo -e "${INFO} ${CYAN}Установка Caddy...${RESET}"
-  apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+setup_nginx_proxy() {
+  if ! command -v nginx &> /dev/null; then
+    echo -e "${ERR} ${RED}Nginx не найден. Установите его вручную перед продолжением.${RESET}"
+    exit 1
+  fi
 
-  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+  echo -e "${ASK} ${YELLOW}Добавить новый Nginx-конфиг для домена $DOMAIN? [Y/n]:${RESET}"
+  read -rp ">>> " CONFIRM_NGINX
+  CONFIRM_NGINX=${CONFIRM_NGINX,,}
 
-  apt update
-  apt install -y caddy
+  if [[ "$CONFIRM_NGINX" == "n" ]]; then
+    echo -e "${WARN} ${YELLOW}Пропускаю создание Nginx-конфига. Не забудь сам проксировать на 127.0.0.1:$PORT${RESET}"
+    return
+  fi
 
-  systemctl enable caddy
-  systemctl start caddy
+  NGINX_CONF="/etc/nginx/sites-available/$DOMAIN"
+  NGINX_LINK="/etc/nginx/sites-enabled/$DOMAIN"
 
-  echo -e "${OK} ${GREEN}Caddy установлен и запущен.${RESET}"
+  echo -e "${INFO} ${CYAN}Создание Nginx-конфига для $DOMAIN...${RESET}"
+  cat > "$NGINX_CONF" <<EOF
+server {
+    listen 80;
+    server_name $DOMAIN;
+
+    location / {
+        proxy_pass http://127.0.0.1:$PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+
+  ln -sfn "$NGINX_CONF" "$NGINX_LINK"
+
+  echo -e "${INFO} ${CYAN}Проверка конфигурации Nginx...${RESET}"
+  if nginx -t; then
+    systemctl reload nginx
+    echo -e "${OK} ${GREEN}Конфигурация применена и Nginx перезапущен.${RESET}"
+  else
+    echo -e "${ERR} ${RED}Ошибка в конфигурации Nginx. Проверь файл $NGINX_CONF вручную.${RESET}"
+  fi
+
+  echo -e "${ASK} ${YELLOW}Настроить HTTPS с помощью certbot? [y/N]:${RESET}"
+  read -rp ">>> " USE_HTTPS
+  USE_HTTPS=${USE_HTTPS,,}
+
+  if [[ "$USE_HTTPS" == "y" ]]; then
+    if ! command -v certbot &> /dev/null; then
+      echo -e "${INFO} ${CYAN}Установка certbot...${RESET}"
+      apt install -y certbot python3-certbot-nginx
+    fi
+    certbot --nginx -d "$DOMAIN"
+  fi
 }
 
 install_cobalt() {
@@ -68,7 +110,7 @@ install_cobalt() {
   echo -e "${ASK} ${YELLOW}Введите внешний API URL (например, https://my.cobalt.instance/):${RESET}"
   read -rp ">>> " API_URL
 
-  echo -e "${ASK} ${YELLOW}Введите доменное имя для доступа через Caddy (например, cobalt.example.com):${RESET}"
+  echo -e "${ASK} ${YELLOW}Введите доменное имя для доступа через Nginx (например, cobalt.example.com):${RESET}"
   read -rp ">>> " DOMAIN
 
   echo -e "${ASK} ${YELLOW}Нужно ли использовать cookies.json? [y/N]:${RESET}"
@@ -87,36 +129,17 @@ install_cobalt() {
   echo -e "${INFO} ${CYAN}Создание docker-compose.yml...${RESET}"
 
   cat > "$COMPOSE_FILE" <<EOF
-  services:
-    cobalt:
-        image: ghcr.io/imputnet/cobalt:11
-
-        init: true
-        read_only: true
-        restart: unless-stopped
-        container_name: cobalt
-
-        ports:
-            - 9000:9000/tcp
-            # if you use a reverse proxy (such as nginx),
-            # uncomment the next line and remove the one above (9000:9000/tcp):
-            # - 127.0.0.1:9000:9000
-
-        environment:
-            # replace https://api.url.example/ with your instance's url
-            # or else tunneling functionality won't work properly
-            API_URL: "$API_URL"
-
-            # if you want to use cookies for fetching data from services,
-            # uncomment the next line & volumes section
-            # COOKIE_PATH: "/cookies.json"
-
-            # it's recommended to configure bot protection or api keys if the instance is public,
-            # see /docs/protect-an-instance.md for more info
-
-            # see /docs/run-an-instance.md for more variables that you can use here
-
-      
+services:
+  cobalt:
+    image: ghcr.io/imputnet/cobalt:11
+    init: true
+    read_only: true
+    restart: unless-stopped
+    container_name: cobalt
+    ports:
+      - 127.0.0.1:$PORT:$PORT
+    environment:
+      API_URL: "$API_URL"
 EOF
 
   if [[ "$USE_COOKIES" == "y" ]]; then
@@ -126,58 +149,33 @@ EOF
   fi
 
   cat >> "$COMPOSE_FILE" <<EOF
-   labels:
-            - com.centurylinklabs.watchtower.scope=cobalt
+    labels:
+      - com.centurylinklabs.watchtower.scope=cobalt
+    # volumes:
+    #   - ./cookies.json:/cookies.json
 
-        # uncomment only if you use the COOKIE_PATH variable
-        # volumes:
-            # - ./cookies.json:/cookies.json
-
-    # watchtower updates the cobalt image automatically
-    watchtower:
-        image: ghcr.io/containrrr/watchtower
-        restart: unless-stopped
-        command: --cleanup --scope cobalt --interval 900 --include-restarting
-        volumes:
-            - /var/run/docker.sock:/var/run/docker.sock
-
-    # if needed, use this image for automatically generating poToken & visitor_data
-    # yt-session-generator:
-    #     image: ghcr.io/imputnet/yt-session-generator:webserver
-
-    #     init: true
-    #     restart: unless-stopped
-    #     container_name: yt-session-generator
-    #     labels:
-    #       - com.centurylinklabs.watchtower.scope=cobalt
+  watchtower:
+    image: ghcr.io/containrrr/watchtower
+    restart: unless-stopped
+    command: --cleanup --scope cobalt --interval 900 --include-restarting
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 EOF
 
   if [[ "$USE_COOKIES" == "y" ]]; then
     cat >> "$COMPOSE_FILE" <<EOF
-    volumes:
-      - ./cookies.json:/cookies.json
+volumes:
+  - ./cookies.json:/cookies.json
 EOF
   fi
 
-  echo -e "${INFO} ${CYAN}Создание Caddyfile для $DOMAIN...${RESET}"
-  cat > "/etc/caddy/Caddyfile" <<EOF
-$DOMAIN {
-    reverse_proxy localhost:$PORT
-    log {
-      output stdout
-      format console
-    }
-}
-EOF
-
-  echo -e "${INFO} ${CYAN}Перезапуск сервиса Caddy для применения конфигурации...${RESET}"
-  systemctl reload caddy || systemctl restart caddy
+  setup_nginx_proxy
 
   echo -e "${INFO} ${CYAN}Запуск Cobalt через Docker Compose...${RESET}"
   docker compose -f "$COMPOSE_FILE" up -d
 
   echo -e "${OK} ${GREEN}Установка завершена!${RESET}"
-  echo -e "${OK} ${GREEN}Cobalt доступен локально на порту $PORT и по домену https://$DOMAIN${RESET}"
+  echo -e "${OK} ${GREEN}Cobalt доступен локально на порту $PORT и по домену http(s)://$DOMAIN${RESET}"
   [[ "$USE_COOKIES" == "y" ]] && echo -e "${WARN} ${YELLOW}Файл cookies.json создан. Заполните его при необходимости.${RESET}"
 }
 
@@ -203,7 +201,6 @@ check_status() {
   if docker ps --format '{{.Names}}' | grep -qw cobalt; then
     echo -e "${OK} ${GREEN}Контейнер cobalt запущен:${RESET}"
     docker ps --filter "name=cobalt" --format "table {{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
-
     echo -e "\n${INFO} ${CYAN}Вывод последних 20 строк логов cobalt...${RESET}"
     docker logs --tail 20 cobalt
   else
@@ -222,10 +219,7 @@ while true; do
   read -rp "${ASK} Выберите действие [1-4]: " choice
 
   case $choice in
-    1)
-      install_caddy
-      install_cobalt
-      ;;
+    1) install_cobalt ;;
     2) update_script ;;
     3) echo -e "${OK} ${GREEN}Выход...${RESET}"; exit 0 ;;
     4) check_status ;;
