@@ -44,7 +44,7 @@ install_cobalt() {
 
   echo -e "${INFO} ${CYAN}Установка зависимостей...${RESET}"
   apt update -y
-  apt install -y docker-compose curl nscd
+  apt install -y docker-compose curl nscd certbot
 
   echo -e "${INFO} ${CYAN}Запуск nscd...${RESET}"
   systemctl enable nscd && systemctl start nscd
@@ -102,24 +102,13 @@ EOF
     restart: unless-stopped
     ports:
       - 80:80
+      - 443:443
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/ssl/certs:ro
+      - ./certs:/etc/letsencrypt/live/$DOMAIN:ro
     networks:
       - cobalt_net
-
-  acme:
-    image: nginxproxy/acme-companion
-    container_name: cobalt-acme
-    restart: unless-stopped
-    environment:
-      - DEFAULT_EMAIL=admin@$DOMAIN
-    volumes:
-      - ./certs:/etc/nginx/certs:rw
-      - ./vhost.d:/etc/nginx/vhost.d:rw
-      - ./html:/usr/share/nginx/html:rw
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    depends_on:
-      - nginx
 
   watchtower:
     image: ghcr.io/containrrr/watchtower
@@ -141,6 +130,22 @@ server {
     listen 80;
     server_name $DOMAIN;
 
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name $DOMAIN;
+
+    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
+
     location / {
         proxy_pass http://cobalt:9000;
         proxy_http_version 1.1;
@@ -152,11 +157,15 @@ server {
 }
 EOF
 
+  echo -e "${INFO} ${CYAN}Выпуск Let's Encrypt сертификата...${RESET}"
+  mkdir -p ./certs /var/www/certbot
+  certbot certonly --standalone -d $DOMAIN --agree-tos --email admin@$DOMAIN --non-interactive --preferred-challenges http
+
   echo -e "${INFO} ${CYAN}Запуск Cobalt через Docker Compose...${RESET}"
   docker compose -f "$COMPOSE_FILE" up -d
 
   echo -e "${OK} ${GREEN}Установка завершена!${RESET}"
-  echo -e "${OK} ${GREEN}Cobalt доступен по адресу http://$DOMAIN${RESET}"
+  echo -e "${OK} ${GREEN}Cobalt доступен по адресу https://$DOMAIN${RESET}"
   [[ "$USE_COOKIES" == "y" ]] && echo -e "${WARN} ${YELLOW}Файл cookies.json создан. Заполните его при необходимости.${RESET}"
 }
 
@@ -168,15 +177,16 @@ manage_certs() {
   read -rp "[?] Выберите действие (0-2): " cert_choice
   case $cert_choice in
     1)
-      echo -e "${INFO} ${CYAN}Перезапуск acme-companion для обновления сертификатов...${RESET}"
-      docker restart cobalt-acme
+      echo -e "${INFO} ${CYAN}Обновление сертификатов certbot...${RESET}"
+      certbot renew
+      docker restart cobalt-nginx
       ;;
     2)
       echo -e "${ASK} ${YELLOW}Введите новый домен:${RESET}"
       read -rp ">>> " NEW_DOMAIN
       sed -i "s/server_name .*/server_name $NEW_DOMAIN;/" "$COBALT_DIR/nginx.conf"
-      sed -i "s/DEFAULT_EMAIL=admin@.*/DEFAULT_EMAIL=admin@$NEW_DOMAIN/" "$COMPOSE_FILE"
       docker compose -f "$COMPOSE_FILE" down
+      certbot certonly --standalone -d $NEW_DOMAIN --agree-tos --email admin@$NEW_DOMAIN --non-interactive --preferred-challenges http
       docker compose -f "$COMPOSE_FILE" up -d
       echo -e "${OK} ${GREEN}Сертификаты обновлены для нового домена: $NEW_DOMAIN${RESET}"
       ;;
