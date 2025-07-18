@@ -52,7 +52,10 @@ install_cobalt() {
   echo -e "${ASK} ${YELLOW}Введите внешний API URL (например, my.cobalt.instance):${RESET}"
   read -rp ">>> " API_URL
   
-  DOMAIN="$API_URL"
+  # Извлечь только домен (хост) из введённой строки, убрав http://, https://, слэши и пр.
+  DOMAIN=$(echo "$API_URL" | sed -E 's#https?://##' | sed 's#/.*##')
+  
+  echo -e "${INFO} ${CYAN}Используем домен для certbot: $DOMAIN${RESET}"
   echo -e "${ASK} ${YELLOW}Нужно ли использовать cookies.json? [y/N]:${RESET}"
   read -rp ">>> " USE_COOKIES
   USE_COOKIES=${USE_COOKIES,,}
