@@ -13,7 +13,7 @@ INFO="ℹ️ "
 OK="✅"
 WARN="⚠️ "
 ERR="❌"
-ASK="👉"
+ASK="🔍"
 
 COBALT_DIR="$HOME/cobalt"
 COMPOSE_FILE="$COBALT_DIR/docker-compose.yml"
@@ -32,64 +32,6 @@ if [ "$(id -u)" -ne 0 ]; then
   echo -e "${ERR} ${RED}Пожалуйста, запустите скрипт с правами root (через sudo)${RESET}"
   exit 1
 fi
-
-setup_nginx_proxy() {
-  if ! command -v nginx &> /dev/null; then
-    echo -e "${ERR} ${RED}Nginx не найден. Установите его вручную перед продолжением.${RESET}"
-    exit 1
-  fi
-
-  echo -e "${ASK} ${YELLOW}Добавить новый Nginx-конфиг для домена $DOMAIN? [Y/n]:${RESET}"
-  read -rp ">>> " CONFIRM_NGINX
-  CONFIRM_NGINX=${CONFIRM_NGINX,,}
-
-  if [[ "$CONFIRM_NGINX" == "n" ]]; then
-    echo -e "${WARN} ${YELLOW}Пропускаю создание Nginx-конфига. Не забудь сам проксировать на 127.0.0.1:$PORT${RESET}"
-    return
-  fi
-
-  NGINX_CONF="/etc/nginx/sites-available/$DOMAIN"
-  NGINX_LINK="/etc/nginx/sites-enabled/$DOMAIN"
-
-  echo -e "${INFO} ${CYAN}Создание Nginx-конфига для $DOMAIN...${RESET}"
-  cat > "$NGINX_CONF" <<EOF
-server {
-    listen 80;
-    server_name $DOMAIN;
-
-    location / {
-        proxy_pass http://127.0.0.1:$PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-}
-EOF
-
-  ln -sfn "$NGINX_CONF" "$NGINX_LINK"
-
-  echo -e "${INFO} ${CYAN}Проверка конфигурации Nginx...${RESET}"
-  if nginx -t; then
-    systemctl reload nginx
-    echo -e "${OK} ${GREEN}Конфигурация применена и Nginx перезапущен.${RESET}"
-  else
-    echo -e "${ERR} ${RED}Ошибка в конфигурации Nginx. Проверь файл $NGINX_CONF вручную.${RESET}"
-  fi
-
-  echo -e "${ASK} ${YELLOW}Настроить HTTPS с помощью certbot? [y/N]:${RESET}"
-  read -rp ">>> " USE_HTTPS
-  USE_HTTPS=${USE_HTTPS,,}
-
-  if [[ "$USE_HTTPS" == "y" ]]; then
-    if ! command -v certbot &> /dev/null; then
-      echo -e "${INFO} ${CYAN}Установка certbot...${RESET}"
-      apt install -y certbot python3-certbot-nginx
-    fi
-    certbot --nginx -d "$DOMAIN"
-  fi
-}
 
 install_cobalt() {
   echo -e "${INFO} ${CYAN}Проверка Docker...${RESET}"
@@ -129,6 +71,13 @@ install_cobalt() {
   echo -e "${INFO} ${CYAN}Создание docker-compose.yml...${RESET}"
 
   cat > "$COMPOSE_FILE" <<EOF
+version: '3.8'
+
+networks:
+  cobalt_net:
+    name: cobalt_net
+    driver: bridge
+
 services:
   cobalt:
     image: ghcr.io/imputnet/cobalt:11
@@ -136,23 +85,28 @@ services:
     read_only: true
     restart: unless-stopped
     container_name: cobalt
-    ports:
-      - 127.0.0.1:$PORT:$PORT
     environment:
       API_URL: "$API_URL"
+    networks:
+      - cobalt_net
 EOF
 
   if [[ "$USE_COOKIES" == "y" ]]; then
-    cat >> "$COMPOSE_FILE" <<EOF
-      COOKIE_PATH: "/cookies.json"
-EOF
+    echo '      COOKIE_PATH: "/cookies.json"' >> "$COMPOSE_FILE"
   fi
 
   cat >> "$COMPOSE_FILE" <<EOF
-    labels:
-      - com.centurylinklabs.watchtower.scope=cobalt
-    # volumes:
-    #   - ./cookies.json:/cookies.json
+
+  nginx:
+    image: nginx:stable
+    container_name: cobalt-nginx
+    restart: unless-stopped
+    ports:
+      - 80:80
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - cobalt_net
 
   watchtower:
     image: ghcr.io/containrrr/watchtower
@@ -163,19 +117,33 @@ EOF
 EOF
 
   if [[ "$USE_COOKIES" == "y" ]]; then
-    cat >> "$COMPOSE_FILE" <<EOF
+    echo -e "
 volumes:
-  - ./cookies.json:/cookies.json
-EOF
+  - ./cookies.json:/cookies.json" >> "$COMPOSE_FILE"
   fi
 
-  setup_nginx_proxy
+  echo -e "${INFO} ${CYAN}Создание конфигурации nginx (./nginx.conf)...${RESET}"
+  cat > nginx.conf <<EOF
+server {
+    listen 80;
+    server_name $DOMAIN;
+
+    location / {
+        proxy_pass http://cobalt:9000;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
 
   echo -e "${INFO} ${CYAN}Запуск Cobalt через Docker Compose...${RESET}"
   docker compose -f "$COMPOSE_FILE" up -d
 
   echo -e "${OK} ${GREEN}Установка завершена!${RESET}"
-  echo -e "${OK} ${GREEN}Cobalt доступен локально на порту $PORT и по домену http(s)://$DOMAIN${RESET}"
+  echo -e "${OK} ${GREEN}Cobalt доступен по адресу http://$DOMAIN${RESET}"
   [[ "$USE_COOKIES" == "y" ]] && echo -e "${WARN} ${YELLOW}Файл cookies.json создан. Заполните его при необходимости.${RESET}"
 }
 
