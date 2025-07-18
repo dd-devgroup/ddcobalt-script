@@ -49,11 +49,10 @@ install_cobalt() {
   echo -e "${INFO} ${CYAN}Запуск nscd...${RESET}"
   systemctl enable nscd && systemctl start nscd
 
-  echo -e "${ASK} ${YELLOW}Введите внешний API URL (например, https://my.cobalt.instance/):${RESET}"
+  echo -e "${ASK} ${YELLOW}Введите внешний API URL (например, my.cobalt.instance):${RESET}"
   read -rp ">>> " API_URL
-
-  DOMAIN=$(echo "$API_URL" | awk -F[/:] '{print $4}')
-
+  
+  DOMAIN="$API_URL"
   echo -e "${ASK} ${YELLOW}Нужно ли использовать cookies.json? [y/N]:${RESET}"
   read -rp ">>> " USE_COOKIES
   USE_COOKIES=${USE_COOKIES,,}
