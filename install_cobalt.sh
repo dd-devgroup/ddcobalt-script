@@ -150,7 +150,8 @@ EOF
   fi
 
   echo -e "${INFO} ${CYAN}Создание конфигурации nginx без SSL (./nginx-temp.conf)...${RESET}"
-  cat > nginx-temp.conf <<EOF
+rm -rf nginx-temp.conf
+cat > nginx-temp.conf <<EOF
 server {
     listen 80;
     server_name $DOMAIN;
