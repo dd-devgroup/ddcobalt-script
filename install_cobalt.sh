@@ -20,6 +20,7 @@ COMPOSE_FILE="$COBALT_DIR/docker-compose.yml"
 PORT="9000"
 SCRIPT_URL="https://raw.githubusercontent.com/dd-devgroup/ddcobalt-script/main/install_cobalt.sh"
 LOCAL_SCRIPT="$HOME/ddcobalt-install.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ ! -f "$LOCAL_SCRIPT" ]]; then
   echo -e "${WARN} ${YELLOW}Скрипт запущен не из файла, сохраняю в $LOCAL_SCRIPT и перезапускаюсь...${RESET}"
@@ -91,113 +92,23 @@ install_cobalt() {
     touch cookies.json
   fi
 
-  echo -e "${INFO} ${CYAN}Создание docker-compose.yml...${RESET}"
+  # Создаем docker-compose.yml из шаблона
+  echo -e "${INFO} ${CYAN}Генерация docker-compose.yml из шаблона...${RESET}"
+  render_template "$SCRIPT_DIR/docker-compose.yml.template" "$COMPOSE_FILE"
 
-  cat > "$COMPOSE_FILE" <<EOF
-version: '3.8'
-
-networks:
-  cobalt_net:
-    name: cobalt_net
-    driver: bridge
-
-services:
-  cobalt:
-    image: ghcr.io/imputnet/cobalt:11
-    init: true
-    read_only: true
-    restart: unless-stopped
-    container_name: cobalt
-    environment:
-      API_URL: "$API_URL"
-    networks:
-      - cobalt_net
-EOF
-
+  # Если нужно, добавим в docker-compose монтирование cookies
   if [[ "$USE_COOKIES" == "y" ]]; then
-    echo '      COOKIE_PATH: "/cookies.json"' >> "$COMPOSE_FILE"
+    sed -i '/environment:/a \      COOKIE_PATH: "/cookies.json"' "$COMPOSE_FILE"
+    sed -i '/volumes:/a \      - ./cookies.json:/cookies.json' "$COMPOSE_FILE"
   fi
 
-  cat >> "$COMPOSE_FILE" <<EOF
+  # Генерируем nginx-temp.conf из шаблона (конфиг без SSL)
+  echo -e "${INFO} ${CYAN}Генерация nginx-temp.conf из шаблона...${RESET}"
+  render_template "$SCRIPT_DIR/nginx-temp.conf.template" "./nginx-temp.conf"
 
-  nginx:
-    image: nginx:stable
-    container_name: cobalt-nginx
-    restart: unless-stopped
-    ports:
-      - 80:80
-      - 443:443
-    volumes:
-      - ./nginx-temp.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./certs:/etc/ssl/certs
-      - ./certs:/etc/letsencrypt/live/$DOMAIN
-      - ./webroot:/var/www/certbot
-    networks:
-      - cobalt_net
-
-  watchtower:
-    image: ghcr.io/containrrr/watchtower
-    restart: unless-stopped
-    command: --cleanup --scope cobalt --interval 900 --include-restarting
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-EOF
-
-  if [[ "$USE_COOKIES" == "y" ]]; then
-    echo '      COOKIE_PATH: "/cookies.json"' >> "$COMPOSE_FILE"
-    echo '    volumes:' >> "$COMPOSE_FILE"
-    echo '      - ./cookies.json:/cookies.json' >> "$COMPOSE_FILE"
-  fi
-
-  echo -e "${INFO} ${CYAN}Создание конфигурации nginx без SSL (./nginx-temp.conf)...${RESET}"
-rm -rf nginx-temp.conf
-cat > nginx-temp.conf <<EOF
-server {
-    listen 80;
-    server_name $DOMAIN;
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
-
-    location / {
-        return 301 https://\$host\$request_uri;
-    }
-}
-EOF
-
-  echo -e "${INFO} ${CYAN}Создание полной конфигурации nginx с SSL (./nginx.conf)...${RESET}"
-  cat > nginx.conf <<EOF
-server {
-    listen 80;
-    server_name $DOMAIN;
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
-
-    location / {
-        return 301 https://\$host\$request_uri;
-    }
-}
-
-server {
-    listen 443 ssl;
-    server_name $DOMAIN;
-
-    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
-
-    location / {
-        proxy_pass http://cobalt:9000;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-}
-EOF
+  # Генерируем nginx.conf из шаблона (конфиг с SSL)
+  echo -e "${INFO} ${CYAN}Генерация nginx.conf из шаблона...${RESET}"
+  render_template "$SCRIPT_DIR/nginx.conf.template" "./nginx.conf"
 
   echo -e "${INFO} ${CYAN}Создание директорий для certbot webroot и certs...${RESET}"
   mkdir -p ./certs ./webroot
@@ -300,6 +211,22 @@ check_status() {
     echo -e "${WARN} ${YELLOW}Контейнер cobalt не запущен.${RESET}"
   fi
 }
+
+# Функция простого рендеринга шаблонов с заменой {{VAR}} на значение переменной
+render_template() {
+  local template_file="$1"
+  local output_file="$2"
+  # Простой рендеринг {{VAR}} заменой значений переменных
+  sed -E "s/{{([A-Z_]+)}}/${!BASH_REMATCH[1]}/g" < "$template_file" | \
+  while IFS= read -r line; do
+    while [[ "$line" =~ \{\{([A-Z_]+)\}\} ]]; do
+      var="${BASH_REMATCH[1]}"
+      line="${line//\{\{$var\}\}/${!var}}"
+    done
+    echo "$line"
+  done > "$output_file"
+}
+
 
 while true; do
   echo -e ""
