@@ -36,36 +36,34 @@ fi
 install_cobalt() {
   echo -e "${INFO} ${CYAN}Проверка Docker...${RESET}"
   if ! command -v docker &> /dev/null; then
-  echo -e "${WARN} ${YELLOW}Docker не найден. Устанавливаю Docker...${RESET}"
-  apt update -y
-  apt install -y ca-certificates curl gnupg lsb-release
+    echo -e "${WARN} ${YELLOW}Docker не найден. Устанавливаю Docker...${RESET}"
+    apt update -y
+    apt install -y ca-certificates curl gnupg lsb-release
 
-  mkdir -p /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 
-  echo \
-    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-    $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+      $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-  apt update -y
-  apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    apt update -y
+    apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-  echo -e "${OK} ${GREEN}Docker установлен.${RESET}"
-else
-  echo -e "${OK} ${GREEN}Docker уже установлен.${RESET}"
-fi
+    echo -e "${OK} ${GREEN}Docker установлен.${RESET}"
+  else
+    echo -e "${OK} ${GREEN}Docker уже установлен.${RESET}"
+  fi
 
-# Проверка docker-compose
-if ! command -v docker-compose &> /dev/null; then
-  echo -e "${WARN} ${YELLOW}docker-compose не найден. Устанавливаю...${RESET}"
-  curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-  chmod +x /usr/local/bin/docker-compose
-  ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
-  echo -e "${OK} ${GREEN}docker-compose установлен.${RESET}"
-else
-  echo -e "${OK} ${GREEN}docker-compose уже установлен.${RESET}"
-fi
-
+  if ! command -v docker-compose &> /dev/null; then
+    echo -e "${WARN} ${YELLOW}docker-compose не найден. Устанавливаю...${RESET}"
+    curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    chmod +x /usr/local/bin/docker-compose
+    ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
+    echo -e "${OK} ${GREEN}docker-compose установлен.${RESET}"
+  else
+    echo -e "${OK} ${GREEN}docker-compose уже установлен.${RESET}"
+  fi
 
   echo -e "${INFO} ${CYAN}Установка зависимостей...${RESET}"
   apt update -y
@@ -77,7 +75,6 @@ fi
   echo -e "${ASK} ${YELLOW}Введите внешний API URL (например, my.cobalt.instance):${RESET}"
   read -rp ">>> " API_URL
 
-  # Извлечь только домен (хост) из введённой строки, убрав http://, https://, слэши и пр.
   DOMAIN=$(echo "$API_URL" | sed -E 's#https?://##' | sed 's#/.*##')
 
   echo -e "${INFO} ${CYAN}Используем домен для certbot: $DOMAIN${RESET}"
@@ -131,9 +128,9 @@ EOF
       - 80:80
       - 443:443
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./certs:/etc/ssl/certs:ro
-      - ./certs:/etc/letsencrypt/live/$DOMAIN:ro
+      - ./nginx-temp.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/ssl/certs
+      - ./certs:/etc/letsencrypt/live/$DOMAIN
       - ./webroot:/var/www/certbot
     networks:
       - cobalt_net
@@ -146,14 +143,29 @@ EOF
       - /var/run/docker.sock:/var/run/docker.sock
 EOF
 
-   if [[ "$USE_COOKIES" == "y" ]]; then
+  if [[ "$USE_COOKIES" == "y" ]]; then
     echo '      COOKIE_PATH: "/cookies.json"' >> "$COMPOSE_FILE"
     echo '    volumes:' >> "$COMPOSE_FILE"
     echo '      - ./cookies.json:/cookies.json' >> "$COMPOSE_FILE"
   fi
 
+  echo -e "${INFO} ${CYAN}Создание конфигурации nginx без SSL (./nginx-temp.conf)...${RESET}"
+  cat > nginx-temp.conf <<EOF
+server {
+    listen 80;
+    server_name $DOMAIN;
 
-  echo -e "${INFO} ${CYAN}Создание конфигурации nginx (./nginx.conf)...${RESET}"
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+EOF
+
+  echo -e "${INFO} ${CYAN}Создание полной конфигурации nginx с SSL (./nginx.conf)...${RESET}"
   cat > nginx.conf <<EOF
 server {
     listen 80;
@@ -187,30 +199,34 @@ server {
 EOF
 
   echo -e "${INFO} ${CYAN}Создание директорий для certbot webroot и certs...${RESET}"
-mkdir -p ./certs ./webroot
+  mkdir -p ./certs ./webroot
 
-echo -e "${INFO} ${CYAN}Запуск nginx для выдачи сертификатов...${RESET}"
-docker compose -f "$COMPOSE_FILE" up -d nginx
+  echo -e "${INFO} ${CYAN}Запуск nginx без SSL для certbot...${RESET}"
+  docker compose -f "$COMPOSE_FILE" up -d nginx
 
-echo -e "${INFO} ${CYAN}Ожидание запуска nginx...${RESET}"
-for i in {1..10}; do
-  if nc -z localhost 80; then
-    echo -e "${OK} ${GREEN}nginx запущен.${RESET}"
-    break
-  fi
-  echo -e "${INFO} ${CYAN}Ожидание... ($i/10)${RESET}"
-  sleep 2
-done
+  echo -e "${INFO} ${CYAN}Ожидание запуска nginx...${RESET}"
+  for i in {1..10}; do
+    if nc -z localhost 80; then
+      echo -e "${OK} ${GREEN}nginx запущен.${RESET}"
+      break
+    fi
+    echo -e "${INFO} ${CYAN}Ожидание... ($i/10)${RESET}"
+    sleep 2
+  done
 
-echo -e "${INFO} ${CYAN}Выпуск Let's Encrypt сертификата...${RESET}"
-certbot certonly --webroot -w "$COBALT_DIR/webroot" -d "$DOMAIN" --agree-tos --email "admin@$DOMAIN" --non-interactive --preferred-challenges http
+  echo -e "${INFO} ${CYAN}Выпуск Let's Encrypt сертификата...${RESET}"
+  certbot certonly --webroot -w "$COBALT_DIR/webroot" -d "$DOMAIN" --agree-tos --email "admin@$DOMAIN" --non-interactive --preferred-challenges http
 
-echo -e "${INFO} ${CYAN}Запуск Cobalt через Docker Compose...${RESET}"
-docker compose -f "$COMPOSE_FILE" up -d
+  echo -e "${INFO} ${CYAN}Обновление nginx конфигурации на SSL...${RESET}"
+  docker cp nginx.conf cobalt-nginx:/etc/nginx/conf.d/default.conf
+  docker exec cobalt-nginx nginx -s reload
 
-echo -e "${OK} ${GREEN}Установка завершена!${RESET}"
-echo -e "${OK} ${GREEN}Cobalt доступен по адресу https://$DOMAIN${RESET}"
-[[ "$USE_COOKIES" == "y" ]] && echo -e "${WARN} ${YELLOW}Файл cookies.json создан. Заполните его при необходимости.${RESET}"
+  echo -e "${INFO} ${CYAN}Запуск Cobalt и Watchtower через Docker Compose...${RESET}"
+  docker compose -f "$COMPOSE_FILE" up -d cobalt watchtower
+
+  echo -e "${OK} ${GREEN}Установка завершена!${RESET}"
+  echo -e "${OK} ${GREEN}Cobalt доступен по адресу https://$DOMAIN${RESET}"
+  [[ "$USE_COOKIES" == "y" ]] && echo -e "${WARN} ${YELLOW}Файл cookies.json создан. Заполните его при необходимости.${RESET}"
 }
 
 manage_certs() {
