@@ -217,9 +217,15 @@ EOF
   echo -e "${INFO} ${CYAN}Выпуск Let's Encrypt сертификата...${RESET}"
   certbot certonly --webroot -w "$COBALT_DIR/webroot" -d "$DOMAIN" --agree-tos --email "admin@$DOMAIN" --non-interactive --preferred-challenges http
 
-  echo -e "${INFO} ${CYAN}Обновление nginx конфигурации на SSL...${RESET}"
-  docker cp nginx.conf cobalt-nginx:/etc/nginx/conf.d/default.conf
-  docker exec cobalt-nginx nginx -s reload
+  echo -e "${INFO} ${CYAN}Остановка nginx для замены конфигурации...${RESET}"
+  docker compose -f "$COMPOSE_FILE" stop nginx
+  
+  echo -e "${INFO} ${CYAN}Замена nginx-temp.conf на полный nginx.conf...${RESET}"
+  cp nginx.conf nginx-temp.conf
+  
+  echo -e "${INFO} ${CYAN}Перезапуск nginx с полной конфигурацией...${RESET}"
+  docker compose -f "$COMPOSE_FILE" up -d nginx
+
 
   echo -e "${INFO} ${CYAN}Запуск Cobalt и Watchtower через Docker Compose...${RESET}"
   docker compose -f "$COMPOSE_FILE" up -d cobalt watchtower
