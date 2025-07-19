@@ -216,15 +216,18 @@ check_status() {
 render_template() {
   local template_file="$1"
   local output_file="$2"
-  # Простой рендеринг {{VAR}} заменой значений переменных
-  sed -E "s/{{([A-Z_]+)}}/${!BASH_REMATCH[1]}/g" < "$template_file" | \
-  while IFS= read -r line; do
+  local line
+
+  > "$output_file" # Очистить/создать выходной файл
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
     while [[ "$line" =~ \{\{([A-Z_]+)\}\} ]]; do
-      var="${BASH_REMATCH[1]}"
-      line="${line//\{\{$var\}\}/${!var}}"
+      var_name="${BASH_REMATCH[1]}"
+      var_value="${!var_name}"  # Получить значение переменной по имени
+      line="${line//\{\{$var_name\}\}/$var_value}"
     done
-    echo "$line"
-  done > "$output_file"
+    echo "$line" >> "$output_file"
+  done < "$template_file"
 }
 
 
