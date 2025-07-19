@@ -201,6 +201,9 @@ EOF
   echo -e "${INFO} ${CYAN}Создание директорий для certbot webroot и certs...${RESET}"
   mkdir -p ./certs ./webroot
 
+  echo -e "${INFO} ${CYAN}Запуск Cobalt и Watchtower через Docker Compose...${RESET}"
+  docker compose -f "$COMPOSE_FILE" up -d cobalt watchtower
+
   echo -e "${INFO} ${CYAN}Запуск nginx без SSL для certbot...${RESET}"
   docker compose -f "$COMPOSE_FILE" up -d nginx
 
@@ -217,23 +220,24 @@ EOF
   echo -e "${INFO} ${CYAN}Выпуск Let's Encrypt сертификата...${RESET}"
   certbot certonly --webroot -w "$COBALT_DIR/webroot" -d "$DOMAIN" --agree-tos --email "admin@$DOMAIN" --non-interactive --preferred-challenges http
 
+  echo -e "${INFO} ${CYAN}Копирование сертификатов в ./certs...${RESET}"
+  cp /etc/letsencrypt/live/$DOMAIN/fullchain.pem "$COBALT_DIR/certs/fullchain.pem"
+  cp /etc/letsencrypt/live/$DOMAIN/privkey.pem "$COBALT_DIR/certs/privkey.pem"
+
   echo -e "${INFO} ${CYAN}Остановка nginx для замены конфигурации...${RESET}"
   docker compose -f "$COMPOSE_FILE" stop nginx
-  
+
   echo -e "${INFO} ${CYAN}Замена nginx-temp.conf на полный nginx.conf...${RESET}"
   cp nginx.conf nginx-temp.conf
-  
+
   echo -e "${INFO} ${CYAN}Перезапуск nginx с полной конфигурацией...${RESET}"
   docker compose -f "$COMPOSE_FILE" up -d nginx
-
-
-  echo -e "${INFO} ${CYAN}Запуск Cobalt и Watchtower через Docker Compose...${RESET}"
-  docker compose -f "$COMPOSE_FILE" up -d cobalt watchtower
 
   echo -e "${OK} ${GREEN}Установка завершена!${RESET}"
   echo -e "${OK} ${GREEN}Cobalt доступен по адресу https://$DOMAIN${RESET}"
   [[ "$USE_COOKIES" == "y" ]] && echo -e "${WARN} ${YELLOW}Файл cookies.json создан. Заполните его при необходимости.${RESET}"
 }
+
 
 manage_certs() {
   DOMAIN=$(grep 'server_name' "$COBALT_DIR/nginx.conf" | head -n1 | awk '{print $2}' | tr -d ';')
